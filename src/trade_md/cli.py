@@ -15,7 +15,7 @@ from importlib.metadata import entry_points
 from pathlib import Path
 
 from . import SPEC_VERSION, __version__
-from .compilers.freqtrade import compile_freqtrade
+from .compilers.freqtrade import compile_freqtrade, write_compiled_output, _class_name
 from .explain import explain_json, explain_text
 from .linter import RECOMMENDED_PROSE, STALENESS_DAYS, lint
 from .parser import parse_file
@@ -78,12 +78,14 @@ def _cmd_compile(args: argparse.Namespace) -> int:
     if compiler is None:
         print(f"error: unknown target {args.target!r}", file=sys.stderr)
         return 2
-    code = compiler(doc)
-    if args.out:
-        Path(args.out).write_text(code, encoding="utf-8")
-        print(f"wrote {args.out} ({len(code.splitlines())} lines)")
-    else:
-        print(code)
+    try:
+        output = compiler(doc, allow_version_drift=args.allow_version_drift)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    msg = write_compiled_output(output, args.out, _class_name(doc))
+    if msg:
+        print(msg)
     return 0
 
 
@@ -149,6 +151,12 @@ _RULES = [
         "summary": f"prose sections present ({', '.join(RECOMMENDED_PROSE)})",
     },
     {"id": "R010", "severity": "info", "summary": "separation_index present"},
+    {"id": "R011", "severity": "error", "summary": "custom indicator modules resolve"},
+    {"id": "R012", "severity": "error", "summary": "declared inputs resolve"},
+    {"id": "R013", "severity": "error", "summary": "output column names unique"},
+    {"id": "R014", "severity": "error", "summary": "compute signature matches params"},
+    {"id": "R015", "severity": "error", "summary": "no forbidden imports or calls"},
+    {"id": "R016", "severity": "warning", "summary": "strategy directory contents"},
 ]
 
 
@@ -188,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     p_compile.add_argument("file")
     p_compile.add_argument("--target", default="freqtrade")
     p_compile.add_argument("-o", "--out")
+    p_compile.add_argument("--allow-version-drift", action="store_true",
+                           help="suppress version pin mismatch errors")
     p_compile.set_defaults(func=_cmd_compile)
 
     p_diff = sub.add_parser("diff", help="diff two TRADE.md versions")

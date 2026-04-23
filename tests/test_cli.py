@@ -79,7 +79,7 @@ def test_cli_spec_rules_json(capsys):
     rc = main(["spec", "--rules-only", "--format", "json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
-    assert len(data["rules"]) == 10
+    assert len(data["rules"]) == 16
 
 
 def test_cli_diff_no_regression(tmp_path, capsys):

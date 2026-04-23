@@ -56,6 +56,14 @@ def test_expr_unknown_token():
         compile_expression("{does_not_exist}", {})
 
 
+def test_expr_adx():
+    r = compile_expression("adx(14) > 25")
+    assert r.mask_expr == "dataframe['adx_14'] > 25"
+    assert {u.col for u in r.uses} == {"adx_14"}
+    assert r.uses[0].kind == "builtin"
+    assert r.uses[0].name == "adx"
+
+
 def test_expr_crosses_above():
     r = compile_expression("crosses_above(ema(20), ema(50))")
     cols = {u.col for u in r.uses}

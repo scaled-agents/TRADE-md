@@ -35,6 +35,7 @@ BUILTIN_INDICATORS: dict[str, dict[str, Any]] = {
     "ema": {"talib": "EMA", "outputs": ["ema"]},
     "sma": {"talib": "SMA", "outputs": ["sma"]},
     "atr": {"talib": "ATR", "outputs": ["atr"]},
+    "adx": {"talib": "ADX", "outputs": ["adx"]},
     "macd": {"talib": "MACD", "outputs": ["macd"], "output_key": "macd"},
     "macd_signal": {"talib": "MACD", "outputs": ["macd_signal"], "output_key": "macdsignal"},
     "macd_hist": {"talib": "MACD", "outputs": ["macd_hist"], "output_key": "macdhist"},

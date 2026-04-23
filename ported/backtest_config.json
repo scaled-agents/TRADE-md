@@ -1,0 +1,25 @@
+{
+    "trading_mode": "spot",
+    "margin_mode": "",
+    "max_open_trades": 3,
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",
+    "tradable_balance_ratio": 0.99,
+    "dry_run_wallet": 1000,
+    "exchange": {
+        "name": "binance",
+        "pair_whitelist": [
+            "BTC/USDT",
+            "ETH/USDT",
+            "SOL/USDT"
+        ],
+        "pair_blacklist": []
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList"
+        }
+    ],
+    "timeframe": "5m",
+    "candle_type_def": "spot"
+}

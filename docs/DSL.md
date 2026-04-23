@@ -22,6 +22,7 @@ open, high, low, close, volume, hl2, hlc3, ohlc4
 | `ema(N)` | Exponential Moving Average, period N |
 | `sma(N)` | Simple Moving Average, period N |
 | `atr(N)` | Average True Range, period N |
+| `adx(N)` | Average Directional Index, period N |
 | `macd()` | MACD line (default 12, 26, 9) |
 | `macd_signal()` | MACD signal line |
 | `macd_hist()` | MACD histogram |

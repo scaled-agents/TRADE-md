@@ -54,7 +54,7 @@ def _emit_builtin_line(use: IndicatorUse, df_var: str) -> str:
     spec = BUILTIN_INDICATORS[use.name]
     talib_name = spec["talib"]
     args = list(use.args)
-    if use.name in ("rsi", "ema", "sma", "atr"):
+    if use.name in ("rsi", "ema", "sma", "atr", "adx"):
         period = args[0]
         call = f"ta.{talib_name}({df_var}, timeperiod={period})"
     elif use.name in ("macd", "macd_signal", "macd_hist"):

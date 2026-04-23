@@ -114,6 +114,7 @@ Conditions are expressions written in a restricted Python-like syntax. The v0.1 
 | `ema(N)` | Exponential MA, period N |
 | `sma(N)` | Simple MA, period N |
 | `atr(N)` | Average True Range, period N |
+| `adx(N)` | Average Directional Index, period N |
 | `macd()` | MACD line (default 12, 26, 9) |
 | `macd_signal()` | MACD signal line |
 | `macd_hist()` | MACD histogram |

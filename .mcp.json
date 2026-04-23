@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "freqtrade": {
+      "command": "uv",
+      "args": ["--directory", "d:/Users/scale/Code/_scaled-agents/freqtrade-mcp", "run", "__main__.py"],
+      "env": {
+        "FREQTRADE_PATH": "freqtrade",
+        "FREQTRADE_STRATEGIES_DIR": "d:/Users/scale/Code/_scaled-agents/trade-md/ported",
+        "FREQTRADE_DOCS_PATH": ""
+      }
+    }
+  }
+}

@@ -1,0 +1,135 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trade-md"
+version = "0.1.0"
+description = "A format spec and toolchain for describing trading strategies as markdown files"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Scaled Agents", email = "dev@scaledagents.com" },
+]
+keywords = ["trading", "strategy", "markdown", "freqtrade", "compiler"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = ["pyyaml>=6.0"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "mypy>=1.8",
+    "coverage[toml]>=7.0",
+]
+# Reserved for future compiler runtime hooks (e.g. freqtrade imports)
+freqtrade = []
+
+[project.urls]
+Homepage = "https://github.com/scaled-agents/TRADE-md"
+Repository = "https://github.com/scaled-agents/TRADE-md"
+Issues = "https://github.com/scaled-agents/TRADE-md/issues"
+
+[project.scripts]
+trade-md = "trade_md.cli:main"
+
+[project.entry-points."trade_md.compilers"]
+freqtrade = "trade_md.compilers.freqtrade:compile_freqtrade"
+
+# ---------- Build ---------------------------------------------------------
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trade_md"]
+
+# ---------- Ruff ----------------------------------------------------------
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "N", "PL"]
+# PLR0911/0912/0915: complexity is acceptable in the compiler and expr modules
+# PLR0911/0912/0915: complexity ok in the compiler
+# PLR2004: magic values are natural in AST code (comparing arg counts etc.)
+# UP038: isinstance(x, (A, B)) is more readable than isinstance(x, A | B)
+# SIM102: nested ifs are sometimes more readable than combined
+ignore = ["PLR0911", "PLR0912", "PLR0915", "PLR2004", "UP038", "SIM102"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["trade_md"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501", "PLR2004"]
+# Compiler emits code strings that exceed line length
+"src/trade_md/compilers/**" = ["E501"]
+
+# ---------- Mypy ----------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+# yaml stubs may or may not be installed
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true
+
+# Strict on core modules
+[[tool.mypy.overrides]]
+module = ["trade_md.parser", "trade_md.linter", "trade_md.explain"]
+strict = true
+# Allow returning Any in parser (yaml.safe_load returns Any)
+warn_return_any = false
+
+# CLI has mixed typed/untyped code due to argparse dynamics and the
+# _diff_docs / _resolve_compiler functions that return flexible types.
+[[tool.mypy.overrides]]
+module = ["trade_md.cli"]
+disallow_untyped_defs = false
+warn_return_any = false
+ignore_errors = true
+
+# Relaxed on AST-heavy modules — the dynamic ast.NodeTransformer patterns and
+# freqtrade code-gen produce too many Any/dynamic-type situations for strict
+# mode to be useful without littering the code with type: ignore comments.
+[[tool.mypy.overrides]]
+module = ["trade_md.expr", "trade_md.compilers", "trade_md.compilers.*"]
+strict = false
+disallow_untyped_defs = false
+ignore_errors = true
+
+# ---------- Pytest --------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v --tb=short"
+
+# ---------- Coverage ------------------------------------------------------
+
+[tool.coverage.run]
+source = ["trade_md"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__",
+    "raise NotImplementedError",
+]

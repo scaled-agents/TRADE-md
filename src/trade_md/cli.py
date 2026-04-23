@@ -1,10 +1,12 @@
-"""TRADE.md CLI — `trade-md lint|compile|diff|spec|explain`.
+"""TRADE.md CLI — `trade-md lint|compile|diff|spec|explain|new-indicator|lint-indicator`.
 
 Usage examples:
     trade-md lint examples/heritage-rsi-ema/TRADE.md
     trade-md compile --target freqtrade examples/heritage-rsi-ema/TRADE.md
     trade-md diff v0.3.0.TRADE.md v0.3.1.TRADE.md
     trade-md spec [--rules] [--format json]
+    trade-md new-indicator sep_score
+    trade-md lint-indicator indicators/sep_score.py
 """
 from __future__ import annotations
 
@@ -17,7 +19,7 @@ from pathlib import Path
 from . import SPEC_VERSION, __version__
 from .compilers.freqtrade import compile_freqtrade, write_compiled_output, _class_name
 from .explain import explain_json, explain_text
-from .linter import RECOMMENDED_PROSE, STALENESS_DAYS, lint
+from .linter import RECOMMENDED_PROSE, STALENESS_DAYS, lint, lint_indicator_standalone
 from .parser import parse_file
 
 _REGRESS_DOWN = ("sharpe", "sortino", "win_rate", "profit_factor", "separation_index")
@@ -134,6 +136,65 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+_INDICATOR_TEMPLATE = '''\
+"""Custom indicator: {name}."""
+from __future__ import annotations
+
+from trade_md import indicator, IntParam, FloatParam
+
+
+@indicator(
+    inputs=["close"],
+    params={{
+        "period": IntParam(default=14, min=2, max=500),
+    }},
+    outputs=["{name}"],
+    description="TODO: describe what {name} measures.",
+    version="0.1.0",
+)
+def compute(df, period: int = 14):
+    # TODO: implement indicator logic
+    return df["close"] * 0
+'''
+
+
+def _cmd_new_indicator(args: argparse.Namespace) -> int:
+    name = args.name
+    out_dir = Path(args.directory)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    init_file = out_dir / "__init__.py"
+    if not init_file.exists():
+        init_file.write_text("", encoding="utf-8")
+    out_file = out_dir / f"{name}.py"
+    if out_file.exists():
+        print(f"error: {out_file} already exists", file=sys.stderr)
+        return 2
+    out_file.write_text(_INDICATOR_TEMPLATE.format(name=name), encoding="utf-8")
+    print(f"created {out_file}")
+    return 0
+
+
+def _cmd_lint_indicator(args: argparse.Namespace) -> int:
+    report = lint_indicator_standalone(Path(args.file))
+    if args.format == "json":
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        summary = report["summary"]
+        print(f"trade-md lint-indicator - {args.file}")
+        print(f"  errors:   {summary['errors']}")
+        print(f"  warnings: {summary['warnings']}")
+        print(f"  info:     {summary['info']}")
+        if not report["findings"]:
+            print("  clean (ok)")
+        else:
+            print()
+            for f in report["findings"]:
+                sigil = {"error": "X", "warning": "!", "info": "."}[f["severity"]]
+                print(f"  {sigil} [{f['rule']}] {f['path']}")
+                print(f"      {f['message']}")
+    return 1 if report["summary"]["errors"] else 0
+
+
 _RULES = [
     {"id": "R001", "severity": "error", "summary": "required top-level fields present"},
     {"id": "R002", "severity": "error", "summary": "stoploss is negative"},
@@ -214,6 +275,19 @@ def main(argv: list[str] | None = None) -> int:
     p_explain.add_argument("file")
     p_explain.add_argument("--format", choices=["text", "json"], default="text")
     p_explain.set_defaults(func=_cmd_explain)
+
+    p_new_ind = sub.add_parser("new-indicator",
+                               help="scaffold a new custom indicator module")
+    p_new_ind.add_argument("name", help="indicator module name (e.g. sep_score)")
+    p_new_ind.add_argument("-d", "--directory", default="indicators",
+                           help="output directory (default: indicators/)")
+    p_new_ind.set_defaults(func=_cmd_new_indicator)
+
+    p_lint_ind = sub.add_parser("lint-indicator",
+                                help="lint a standalone indicator module")
+    p_lint_ind.add_argument("file", help="path to indicator .py file")
+    p_lint_ind.add_argument("--format", choices=["human", "json"], default="human")
+    p_lint_ind.set_defaults(func=_cmd_lint_indicator)
 
     args = p.parse_args(argv)
     return args.func(args)

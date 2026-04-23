@@ -224,6 +224,14 @@ def explain_text(doc: TradeDoc) -> str:
             be_part = f" against {be}" if be else ""
             lines.append(f"            Last validated {lv}{be_part}")
 
+    # Custom indicators
+    if doc.custom_indicators:
+        lines.append("")
+        lines.append("Custom indicators:")
+        for ref in doc.custom_indicators:
+            pin = f" (pin {ref.version_pin})" if ref.version_pin else ""
+            lines.append(f"  - {ref.as_name}: {ref.module}{pin}")
+
     # Lineage
     if lineage:
         lines.append("")
@@ -276,6 +284,14 @@ def explain_json(doc: TradeDoc) -> dict[str, Any]:
         "disable_when": fm.get("disable_when") or [],
         "disable_when_humanized": [
             _humanize_disable_when(d) for d in (fm.get("disable_when") or [])
+        ],
+        "custom_indicators": [
+            {
+                "as_name": ref.as_name,
+                "module": ref.module,
+                "version_pin": ref.version_pin,
+            }
+            for ref in doc.custom_indicators
         ],
         "provenance": prov,
         "lineage": lineage,

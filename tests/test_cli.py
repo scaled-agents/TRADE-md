@@ -112,6 +112,62 @@ provenance: {sharpe: 1.5, max_dd: 0.10}
     assert rc == 0
 
 
+def test_cli_new_indicator(tmp_path, capsys):
+    """new-indicator scaffolds a valid indicator module."""
+    rc = main(["new-indicator", "sep_score", "-d", str(tmp_path / "indicators")])
+    assert rc == 0
+    out_file = tmp_path / "indicators" / "sep_score.py"
+    assert out_file.exists()
+    content = out_file.read_text()
+    assert "@indicator" in content
+    assert "def compute" in content
+    assert (tmp_path / "indicators" / "__init__.py").exists()
+
+
+def test_cli_new_indicator_already_exists(tmp_path, capsys):
+    """new-indicator refuses to overwrite existing file."""
+    ind_dir = tmp_path / "indicators"
+    ind_dir.mkdir()
+    (ind_dir / "dup.py").write_text("# existing")
+    rc = main(["new-indicator", "dup", "-d", str(ind_dir)])
+    assert rc == 2
+
+
+def test_cli_lint_indicator_clean(capsys):
+    """lint-indicator on a clean indicator exits 0."""
+    path = str(Path(__file__).parent / "fixtures" / "strategy_dir" / "indicators" / "test_ind.py")
+    rc = main(["lint-indicator", path])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "clean (ok)" in captured.out
+
+
+def test_cli_lint_indicator_bad(capsys):
+    """lint-indicator on a bad indicator reports R015 findings."""
+    path = str(Path(__file__).parent / "fixtures" / "bad_indicator.py")
+    rc = main(["lint-indicator", path])
+    # R015 is a warning, not an error, so rc is 0
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "R015" in captured.out
+
+
+def test_cli_lint_indicator_json(capsys):
+    """lint-indicator with --format json outputs valid JSON."""
+    path = str(Path(__file__).parent / "fixtures" / "strategy_dir" / "indicators" / "test_ind.py")
+    rc = main(["lint-indicator", path, "--format", "json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["summary"]["errors"] == 0
+
+
+def test_cli_lint_directory(capsys):
+    """lint accepts a directory path."""
+    path = str(Path(__file__).parent / "fixtures" / "strategy_dir")
+    rc = main(["lint", path])
+    assert rc == 0
+
+
 def test_cli_diff_regression(tmp_path, capsys):
     """Diff two versions with worsened metrics - exit 1."""
     v1 = """---

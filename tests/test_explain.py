@@ -1,8 +1,12 @@
 """Tests for trade_md.explain."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from trade_md.explain import explain_json, explain_text
-from trade_md.parser import parse_string
+from trade_md.parser import parse_file, parse_string
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_explain_text(example_doc):
@@ -73,3 +77,21 @@ sizing: {method: fixed_stake, max_open_trades: 3}
 """)
     text = explain_text(doc)
     assert "no trailing" in text
+
+
+def test_explain_text_custom_indicators():
+    """explain text includes custom indicators section."""
+    doc = parse_file(FIXTURES_DIR / "strategy_dir")
+    text = explain_text(doc)
+    assert "Custom indicators:" in text
+    assert "test_score" in text
+    assert "indicators.test_ind" in text
+
+
+def test_explain_json_custom_indicators():
+    """explain JSON includes custom_indicators list."""
+    doc = parse_file(FIXTURES_DIR / "strategy_dir")
+    data = explain_json(doc)
+    assert len(data["custom_indicators"]) == 1
+    assert data["custom_indicators"][0]["as_name"] == "test_score"
+    assert data["custom_indicators"][0]["version_pin"] == "1.0"

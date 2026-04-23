@@ -20,7 +20,10 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .indicator import IndicatorMetadata
 
 # ---------- Built-in indicator registry ----------------------------------
 
@@ -130,11 +133,16 @@ class _ExprCompiler(ast.NodeTransformer):
       - a constant / comparison / BoolOp / BinOp / UnaryOp
     """
 
-    def __init__(self, df_name: str = "dataframe"):
+    def __init__(
+        self,
+        df_name: str = "dataframe",
+        custom_indicators: dict[str, IndicatorMetadata] | None = None,
+    ):
         self.df_name = df_name
         self.uses: list[IndicatorUse] = []
         self._seen_cols: set[str] = set()
         self.timeframes: set[str] = set()
+        self._custom_indicators = custom_indicators or {}
 
     # ---- helpers ----
 
@@ -313,6 +321,8 @@ class _ExprCompiler(ast.NodeTransformer):
                     return self._handle_htf(node)
                 if fname in BUILTIN_INDICATORS:
                     return self._lower_builtin(fname, node, timeframe)
+                if fname in self._custom_indicators:
+                    return self._lower_custom(fname, node, timeframe)
                 if fname == "crosses_above":
                     return self._lower_crosses(node, direction="above", timeframe=timeframe)
                 if fname == "crosses_below":
@@ -329,6 +339,51 @@ class _ExprCompiler(ast.NodeTransformer):
             raise ValueError("Unsupported call form")
 
         raise ValueError(f"Unsupported node type: {type(node).__name__}")
+
+    def _lower_custom(self, name: str, call: ast.Call, timeframe: str | None) -> ast.AST:
+        """Lower a custom indicator call, e.g. sep_score(lookback=100)."""
+        meta = self._custom_indicators[name]
+
+        # Custom indicators use keyword-only arguments.
+        if call.args:
+            raise ValueError(
+                f"Custom indicator {name!r} requires keyword arguments, "
+                f"got {len(call.args)} positional argument(s)"
+            )
+
+        # Extract keyword values and validate against declared params.
+        kwargs: dict[str, Any] = {}
+        for kw in call.keywords:
+            if kw.arg is None:
+                raise ValueError(f"**kwargs not allowed in custom indicator {name!r}")
+            val = _const_value(kw.value)
+            kwargs[kw.arg] = val
+
+        # Fill defaults for missing kwargs.
+        for pname, param in meta.params.items():
+            if pname not in kwargs:
+                kwargs[pname] = param.default
+
+        # Validate each value against param constraints.
+        for pname, val in kwargs.items():
+            if pname not in meta.params:
+                raise ValueError(
+                    f"Unknown parameter {pname!r} for custom indicator {name!r}. "
+                    f"Declared params: {sorted(meta.params.keys())}"
+                )
+            meta.params[pname].validate(val)
+
+        # Build deterministic column name: <as_name>_<param_short_suffix>[_<tf>]
+        col = _custom_col_name(name, kwargs, timeframe)
+
+        self._register_use(IndicatorUse(
+            col=col,
+            kind="custom",
+            name=name,
+            args=tuple(sorted(kwargs.items())),
+            timeframe=timeframe,
+        ))
+        return self._df_col(col)
 
     def _lower_crosses(self, call: ast.Call, direction: str, timeframe: str | None) -> ast.AST:
         """Sugar: crosses_above(a, b) → (a > b) & (a.shift(1) <= b.shift(1)).
@@ -369,6 +424,26 @@ class _ExprCompiler(ast.NodeTransformer):
         return self._df_col(col)
 
 
+def _custom_col_name(
+    as_name: str, kwargs: dict[str, Any], timeframe: str | None,
+) -> str:
+    """Build a deterministic column name for a custom indicator call.
+
+    Convention: ``<as_name>_<p1_abbrev><val1>[_<p2_abbrev><val2>][_<tf>]``
+    where the abbreviation is the first letter of each param name and
+    decimal points are replaced with ``p`` to keep names identifier-safe.
+    """
+    parts = [as_name]
+    for pname in sorted(kwargs.keys()):
+        val = kwargs[pname]
+        abbrev = pname[0]
+        val_str = str(val).replace(".", "p").replace("-", "m")
+        parts.append(f"{abbrev}{val_str}")
+    if timeframe:
+        parts.append(timeframe)
+    return "_".join(parts)
+
+
 def _const_value(node: ast.AST) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
@@ -388,13 +463,16 @@ def compile_expression(
     expr: str,
     indicators: dict[str, Any] | None = None,
     df_name: str = "dataframe",
+    custom_indicators: dict[str, IndicatorMetadata] | None = None,
 ) -> CompiledExpr:
     """Compile a single TRADE.md condition into a pandas mask + indicator uses.
 
     Args:
         expr: The raw condition string from TRADE.md.
-        indicators: The `indicators:` block for token substitution.
+        indicators: The ``indicators:`` block for token substitution.
         df_name: Name of the pandas DataFrame variable in the emitted code.
+        custom_indicators: ``{as_name: IndicatorMetadata}`` for custom indicator
+            resolution (from :meth:`TradeDoc.load_custom_indicators`).
     """
     if indicators is None:
         indicators = {}
@@ -405,7 +483,7 @@ def compile_expression(
     except SyntaxError as e:
         raise ValueError(f"Invalid expression syntax: {expr!r}: {e}") from e
 
-    compiler = _ExprCompiler(df_name=df_name)
+    compiler = _ExprCompiler(df_name=df_name, custom_indicators=custom_indicators)
     lowered = compiler._lower(tree.body)
     mask_expr = ast.unparse(lowered)
     return CompiledExpr(
@@ -419,11 +497,15 @@ def compile_conditions(
     conditions: list[str],
     indicators: dict[str, Any] | None = None,
     df_name: str = "dataframe",
+    custom_indicators: dict[str, IndicatorMetadata] | None = None,
 ) -> CompiledExpr:
     """Compile a list of conditions (ANDed together) into a single mask."""
     if not conditions:
         raise ValueError("At least one condition required")
-    compiled = [compile_expression(c, indicators, df_name) for c in conditions]
+    compiled = [
+        compile_expression(c, indicators, df_name, custom_indicators)
+        for c in conditions
+    ]
     # AND all masks together
     if len(compiled) == 1:
         return compiled[0]

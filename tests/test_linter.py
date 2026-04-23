@@ -1,8 +1,12 @@
-"""Tests for trade_md.linter — covers R001-R010."""
+"""Tests for trade_md.linter — covers R001-R016."""
 from __future__ import annotations
 
-from trade_md.linter import lint
-from trade_md.parser import parse_string
+from pathlib import Path
+
+from trade_md.linter import lint, lint_indicator_standalone
+from trade_md.parser import parse_file, parse_string
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def _rules(report: dict) -> set[str]:
@@ -312,3 +316,131 @@ def test_broken_fixture_has_all_expected_rules(broken_doc):
     # broken.TRADE.md triggers R002, R003, R004, R005, R006, R007, R008, R009, R010
     for expected in ("R002", "R003", "R004", "R005", "R006", "R007", "R008", "R009", "R010"):
         assert expected in rules, f"Expected {expected} in broken fixture findings"
+
+
+# ---- R011: custom indicator modules resolve --------------------------------
+
+def test_r011_clean_custom_indicator():
+    """Strategy with valid custom indicator produces no R011."""
+    doc = parse_file(FIXTURES_DIR / "strategy_dir")
+    report = lint(doc)
+    assert "R011" not in _rules(report)
+
+
+def test_r011_missing_module():
+    """Strategy referencing a nonexistent module triggers R011."""
+    doc = parse_string("""---
+trade_md_spec: "0.2"
+name: t
+version: 0.1.0
+market: {regime: [trending], timeframe: 5m, pair_universe: {quote: USDT, exchange: binance, filter: top50_volume}}
+signals: {entry_long: {conditions: ["rsi(14) < 30"]}}
+risk: {stoploss: -0.05, roi: {"0": 0.10}}
+sizing: {method: fixed_stake, max_open_trades: 3}
+custom_indicators:
+  - module: indicators.does_not_exist
+    as: nope
+---
+## Thesis
+Test.
+## When to disable
+Never.
+""", source_path=FIXTURES_DIR / "strategy_dir" / "TRADE.md")
+    report = lint(doc)
+    assert "R011" in _rules(report)
+
+
+# ---- R012: declared inputs resolve -----------------------------------------
+
+def test_r012_bad_input():
+    """Indicator with an input that's not OHLCV or built-in triggers R012."""
+    doc = parse_file(FIXTURES_DIR / "strategy_dir")
+    report = lint(doc)
+    # test_ind declares inputs=["close", "volume"] — both valid.
+    assert "R012" not in _rules(report)
+
+
+# ---- R013: output column collisions ----------------------------------------
+
+def test_r013_no_collision():
+    """Custom indicator with unique outputs doesn't trigger R013."""
+    doc = parse_file(FIXTURES_DIR / "strategy_dir")
+    report = lint(doc)
+    assert "R013" not in _rules(report)
+
+
+# ---- R014: signature matches params ----------------------------------------
+
+def test_r014_signature_matches():
+    """Custom indicator with matching signature doesn't trigger R014."""
+    doc = parse_file(FIXTURES_DIR / "strategy_dir")
+    report = lint(doc)
+    assert "R014" not in _rules(report)
+
+
+# ---- R015: forbidden imports -----------------------------------------------
+
+def test_r015_forbidden_import():
+    """Indicator with socket import triggers R015."""
+    report = lint_indicator_standalone(FIXTURES_DIR / "bad_indicator.py")
+    rules = {f["rule"] for f in report["findings"]}
+    assert "R015" in rules
+    assert any("socket" in f["message"] for f in report["findings"])
+
+
+def test_r015_clean_indicator():
+    """Clean indicator doesn't trigger R015."""
+    report = lint_indicator_standalone(
+        FIXTURES_DIR / "strategy_dir" / "indicators" / "test_ind.py"
+    )
+    rules = {f["rule"] for f in report["findings"]}
+    assert "R015" not in rules
+
+
+# ---- R016: directory contents -----------------------------------------------
+
+def test_r016_clean_directory():
+    """Strategy directory with only allowed contents doesn't trigger R016."""
+    doc = parse_file(FIXTURES_DIR / "strategy_dir")
+    report = lint(doc)
+    assert "R016" not in _rules(report)
+
+
+def test_r016_unexpected_file(tmp_path):
+    """Strategy directory with unexpected file triggers R016."""
+    # Build a minimal strategy dir with an extra file.
+    trade_md = tmp_path / "TRADE.md"
+    trade_md.write_text("""---
+name: t
+version: 0.1.0
+market: {regime: [trending], timeframe: 5m, pair_universe: {quote: USDT, exchange: binance, filter: top50_volume}}
+signals: {entry_long: {conditions: ["rsi(14) < 30"]}}
+risk: {stoploss: -0.05, roi: {"0": 0.10}}
+sizing: {method: fixed_stake, max_open_trades: 3}
+---
+## Thesis
+Test.
+## When to disable
+Never.
+""")
+    (tmp_path / "junk.txt").write_text("unexpected")
+    doc = parse_file(tmp_path)
+    report = lint(doc)
+    assert "R016" in _rules(report)
+
+
+# ---- lint_indicator_standalone ----------------------------------------------
+
+def test_lint_indicator_standalone_clean():
+    """Standalone lint of a valid indicator file passes."""
+    report = lint_indicator_standalone(
+        FIXTURES_DIR / "strategy_dir" / "indicators" / "test_ind.py"
+    )
+    assert report["summary"]["errors"] == 0
+
+
+def test_lint_indicator_standalone_missing_file():
+    """Standalone lint of a nonexistent file produces R011."""
+    report = lint_indicator_standalone(FIXTURES_DIR / "nope.py")
+    assert report["summary"]["errors"] == 1
+    assert "R011" in {f["rule"] for f in report["findings"]}

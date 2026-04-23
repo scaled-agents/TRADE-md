@@ -4,7 +4,7 @@
 
 TRADE.md gives agents a persistent, structured understanding of a strategy's behaviour, risk profile, and lineage. It combines machine-readable tokens (YAML front matter) with human-readable rationale (markdown prose) in a single file -- just like DESIGN.md does for visual identity, but with one critical difference: the tokens are *executable semantics*. Compilers emit concrete strategy code directly from the file.
 
-This is **v0.1 alpha**. Ships a freqtrade compiler as the first concrete target.
+This is **v0.2 alpha**. Ships a freqtrade compiler, custom indicator support, and a strategy-as-directory layout.
 
 ---
 
@@ -58,6 +58,12 @@ trade-md diff v0.3.0.TRADE.md v0.3.1.TRADE.md
 
 # dump the linter rules as JSON (for agent context injection)
 trade-md spec --rules-only --format json
+
+# scaffold a new custom indicator module
+trade-md new-indicator sep_score
+
+# lint a standalone indicator module
+trade-md lint-indicator indicators/sep_score.py
 ```
 
 ## The condition DSL in one example
@@ -107,20 +113,23 @@ See [docs/DSL.md](docs/DSL.md) for the full DSL reference with more examples.
 src/trade_md/
   parser.py                  Front matter + prose section parsing
   expr.py                    Condition DSL -> AST -> pandas mask
-  linter.py                  Rule-based validator (R001..R010)
+  linter.py                  Rule-based validator (R001..R016)
   explain.py                 Strategy summary for agent context
   cli.py                     `trade-md` CLI entry point
+  indicator.py               @indicator decorator and IndicatorMetadata
+  params.py                  Typed parameter descriptors (IntParam, etc.)
   compilers/
-    freqtrade.py             Emits freqtrade IStrategy Python
+    freqtrade.py             Emits freqtrade IStrategy Python or package
 docs/
-  SPEC.md                    Format specification v0.1
+  SPEC.md                    Format specification v0.2
   DSL.md                     Condition DSL reference
   WORKFLOW.md                Canonical edit/lint/compile workflow
 examples/
-  heritage-rsi-ema/TRADE.md  Reference example (lints clean)
+  heritage-rsi-ema/          v0.1 reference example (single file)
+  heritage-rsi-ema-v02/      v0.2 reference example (strategy directory)
 skills/
   trade-md-workflow/SKILL.md Claude skill for strategy editing
-tests/                       54 tests, 87% coverage
+tests/                       125 tests
 ```
 
 ## How this plugs into freqtrade-agents
@@ -152,6 +161,7 @@ See [docs/WORKFLOW.md](docs/WORKFLOW.md) for the full workflow reference.
 
 - Hummingbot / Jesse / custom-runtime compilers
 - `trade-md simulate` -- round-trip backtest + provenance write-back
+- `trade-md migrate` -- automatic v0.1 to v0.2 directory migration
 - Declarative FreqAI feature pipelines
 - Signed provenance (reproducibility hashes)
 

@@ -100,7 +100,8 @@ def substitute_tokens(expr: str, indicators: dict[str, Any]) -> str:
             if name not in indicators:
                 raise ValueError(f"Unknown indicator token: {{{name}}}")
             seen.add(name)
-            inner = indicators[name].get("expr", "")
+            ind_val = indicators[name]
+            inner = ind_val if isinstance(ind_val, str) else (ind_val or {}).get("expr", "")
             result = _sub(inner)
             seen.discard(name)
             return f"({result})"

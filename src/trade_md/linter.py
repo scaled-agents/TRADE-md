@@ -127,7 +127,10 @@ def lint(doc: TradeDoc) -> dict[str, Any]:
 
     # also parse indicator expressions
     for ind_name, ind_body in (doc.indicators or {}).items():
-        expr = (ind_body or {}).get("expr", "")
+        if isinstance(ind_body, str):
+            expr = ind_body
+        else:
+            expr = (ind_body or {}).get("expr", "")
         if expr:
             try:
                 c = compile_expression(

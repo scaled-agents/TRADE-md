@@ -99,8 +99,12 @@ Run `trade-md explain` first. If disable conditions would have tripped, the ques
 trade-md explain TRADE.md                          # summarize for context
 trade-md explain TRADE.md --format json            # structured output
 trade-md lint TRADE.md                             # validate
+trade-md lint my-strategy/                         # validate a strategy directory
 trade-md lint TRADE.md --format json               # machine-readable
 trade-md compile --target freqtrade TRADE.md -o X  # emit strategy
+trade-md compile --allow-version-drift ...         # suppress version pin errors
 trade-md diff old.TRADE.md new.TRADE.md            # regression check
 trade-md spec --rules-only --format json           # linter rules
+trade-md new-indicator sep_score                   # scaffold new indicator
+trade-md lint-indicator indicators/my_ind.py       # lint indicator standalone
 ```

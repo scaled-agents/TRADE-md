@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trade-md"
-version = "0.1.0"
+version = "0.2.0"
 description = "A format spec and toolchain for describing trading strategies as markdown files"
 readme = "README.md"
 license = "MIT"

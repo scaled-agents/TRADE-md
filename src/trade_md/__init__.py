@@ -3,8 +3,8 @@
 Spec: docs/SPEC.md
 """
 
-__version__ = "0.1.0"
-SPEC_VERSION = "0.1"
+__version__ = "0.2.0"
+SPEC_VERSION = "0.2"
 
 from .compilers.freqtrade import compile_freqtrade  # noqa: E402
 from .indicator import IndicatorMetadata, indicator  # noqa: E402

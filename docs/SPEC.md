@@ -1,4 +1,4 @@
-# TRADE.md Specification v0.1
+# TRADE.md Specification v0.2
 
 **Status:** alpha · **Last updated:** 2026-04-22
 
@@ -17,7 +17,7 @@ This mirrors the DESIGN.md pattern, with one critical difference: a strategy's t
 
 ## 2. Design principles
 
-1. **One strategy, one file.** A TRADE.md describes a strategy's identity and behaviour, not its deployment. Portfolio placement, cell assignment, and live/paper status are *preferences* expressible in the file but *not* identity.
+1. **One strategy, one file (or directory).** A TRADE.md describes a strategy's identity and behaviour, not its deployment. A strategy may be a single file or a directory containing `TRADE.md` at root plus an `indicators/` subdirectory for custom indicator modules.
 2. **Engine-agnostic semantics, engine-specific compilers.** The format uses universal concepts (signals, risk, sizing, gates). Each engine (freqtrade, hummingbot, custom) implements its own compiler.
 3. **Provenance is first-class.** Backtest results, Separation Index, kata lineage, and graduation status live in the file itself. A strategy without provenance is incomplete.
 4. **Disable conditions are runtime, not documentation.** The "When to disable" prose section has a structured mirror (`disable_when`) that monitors read at runtime.
@@ -141,15 +141,87 @@ The `market.informative_timeframes` array must include every timeframe reference
 
 ```yaml
 indicators:
-  trend_filter:
-    expr: "ema(200) - ema(50)"
-  vol_surge:
-    expr: "volume > volume.rolling(20).mean() * 1.5"
+  trend_filter: "ema(200)"
+  vol_surge: "volume > sma(20).rolling(20).mean() * 1.5"
 ```
 
-Reference them as `{trend_filter}` or `{vol_surge}` inside conditions.
+Reference them as `{trend_filter}` or `{vol_surge}` inside conditions. Values can be plain strings or objects with an `expr` key.
 
-### 5.6 Operators
+### 5.6 Custom indicators (v0.2)
+
+Custom indicators are Python modules that follow a strict protocol using the `@indicator` decorator. They live in an `indicators/` subdirectory alongside `TRADE.md`.
+
+#### Registration
+
+```yaml
+custom_indicators:
+  - module: indicators.sep_score
+    as: sep_score
+    version_pin: "1.0"
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `module` | `string` | yes | Python dotted module path relative to strategy directory |
+| `as` | `string` | yes | Alias used in conditions |
+| `version_pin` | `string` | no | Semver prefix pin (e.g. `"1.0"` matches `>=1.0.0,<1.1.0`) |
+
+#### Indicator module protocol
+
+Each module must contain exactly one `@indicator`-decorated `compute` function:
+
+```python
+from trade_md import indicator, IntParam, FloatParam
+
+@indicator(
+    inputs=["close", "volume"],
+    params={
+        "lookback": IntParam(default=100, min=20, max=500),
+        "smoothing": FloatParam(default=0.1, min=0.0, max=1.0),
+    },
+    outputs=["sep_score"],
+    startup_candles=100,
+    description="Rolling separation index.",
+    version="1.0.0",
+)
+def compute(df, lookback: int = 100, smoothing: float = 0.1):
+    # ...
+    return result
+```
+
+#### Usage in conditions
+
+Custom indicators are called with keyword arguments in conditions:
+
+```yaml
+conditions:
+  - "sep_score(lookback=100, smoothing=0.1) > 0.5"
+```
+
+Parameter values are validated at lint/compile time against declared param constraints.
+
+#### Param types
+
+| Type | Fields |
+|---|---|
+| `IntParam` | `default`, `min`, `max` |
+| `FloatParam` | `default`, `min`, `max` |
+| `StrParam` | `default`, `choices` |
+| `BoolParam` | `default` |
+
+#### Directory layout
+
+```
+my-strategy/
+  TRADE.md
+  indicators/
+    __init__.py
+    sep_score.py
+```
+
+The `custom_indicators` block requires `trade_md_spec: "0.2"` or later. Files declaring `trade_md_spec: "0.1"` cannot use custom indicators.
+
+### 5.7 Operators
 
 - Comparison: `<`, `>`, `<=`, `>=`, `==`, `!=`
 - Logical: `and`, `or`, `not`
@@ -241,13 +313,17 @@ disable_when:
 
 ```
 trade-md lint TRADE.md                        # validate against spec + rule checks
-trade-md compile --target freqtrade TRADE.md  # emit IStrategy Python file
-trade-md simulate TRADE.md                    # run backtest, write back provenance
+trade-md lint my-strategy/                    # lint a strategy directory
+trade-md compile --target freqtrade TRADE.md  # emit IStrategy Python file or package
+trade-md compile --allow-version-drift ...    # suppress version pin mismatch errors
 trade-md diff v0.3.0.TRADE.md v0.3.1.TRADE.md # token + performance regression
-trade-md spec [--rules] [--format json]       # print spec (for agent context injection)
+trade-md explain TRADE.md                     # natural-language strategy summary
+trade-md spec [--rules-only] [--format json]  # print spec or rules (for agent context)
+trade-md new-indicator sep_score              # scaffold a new indicator module
+trade-md lint-indicator indicators/my_ind.py  # lint a standalone indicator module
 ```
 
-## 13. Linter rules (v0.1)
+## 13. Linter rules
 
 | ID | Severity | Rule |
 |---|---|---|
@@ -261,6 +337,12 @@ trade-md spec [--rules] [--format json]       # print spec (for agent context in
 | R008 | warning | Trailing stop `offset > positive` |
 | R009 | warning | Prose sections `Thesis`, `When to disable` present |
 | R010 | info | `separation_index` present in provenance |
+| R011 | error | Custom indicator modules resolve and have exactly one `@indicator` function |
+| R012 | error | Declared indicator `inputs` resolve to OHLCV or built-in columns |
+| R013 | error | Output column names are unique (no collisions with builtins/OHLCV) |
+| R014 | error | Compute function signature matches declared `params` |
+| R015 | warning | No forbidden imports (`socket`, `subprocess`, etc.) or calls (`eval`, `exec`) |
+| R016 | warning | Strategy directory contains only allowed entries |
 
 Linter output is structured JSON:
 ```json
@@ -276,10 +358,10 @@ Linter output is structured JSON:
 The spec itself is versioned. TRADE.md files may declare the spec version they target:
 
 ```yaml
-trade_md_spec: "0.1"
+trade_md_spec: "0.2"
 ```
 
-Absent means latest. Compilers refuse unknown major versions.
+Absent means latest. Files declaring `"0.1"` cannot use `custom_indicators`. Compilers refuse unknown major versions.
 
 ## 15. Non-goals (v0.1)
 
@@ -293,4 +375,4 @@ Absent means latest. Compilers refuse unknown major versions.
 - Declarative ML feature pipelines beyond FreqAI
 - Cross-strategy optimization hints (`optimizer:` block)
 - Signed provenance (backtest reproducibility hashes)
-- `trade-md explain` — natural-language strategy summary for agent context
+- `trade-md migrate` — automatic v0.1 to v0.2 directory migration

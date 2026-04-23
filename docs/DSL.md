@@ -214,3 +214,31 @@ signals:
 ```
 
 Tags are emitted as `exit_tag` values in freqtrade for trade analysis.
+
+### Example 8: Custom indicator (v0.2)
+
+Custom indicators are Python modules registered in the `custom_indicators` block and called with keyword arguments:
+
+```yaml
+custom_indicators:
+  - module: indicators.sep_score
+    as: sep_score
+    version_pin: "1.0"
+
+signals:
+  entry_long:
+    conditions:
+      - "rsi(14) < 30"
+      - "sep_score(lookback=100, smoothing=0.1) > 0.5"
+```
+
+The compiled output imports the indicator and calls it during `populate_indicators`:
+
+```python
+from .indicators.sep_score import compute as _sep_score_compute
+
+# In populate_indicators:
+dataframe['sep_score_l100_s0p1'] = _sep_score_compute(dataframe, lookback=100, smoothing=0.1)
+```
+
+Parameter names are abbreviated in column names: first letter + value, with `p` for decimal points and `m` for negative values. Parameters are validated at lint/compile time against the declared `IntParam`, `FloatParam`, etc. constraints.

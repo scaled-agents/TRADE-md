@@ -63,7 +63,9 @@ def _emit_builtin_line(use: IndicatorUse, df_var: str) -> str:
         call = f"ta.{talib_name}({df_var})[{out_key!r}]"
     elif use.name in ("bb_upper", "bb_lower", "bb_middle"):
         period = args[0] if args else 20
-        std = args[1] if len(args) > 1 else 2
+        # talib BBANDS requires nbdevup/nbdevdn as floats — int raises
+        # `TypeError: Invalid parameter value for nbdevup (expected float, got int)`.
+        std = float(args[1]) if len(args) > 1 else 2.0
         out_key = spec["output_key"]
         call = (
             f"ta.BBANDS({df_var}, timeperiod={period}, "

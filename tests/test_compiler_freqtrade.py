@@ -288,6 +288,30 @@ def test_compiler_short_only_no_long_emission():
     assert "['exit_long', 'exit_tag']" not in code
 
 
+# ---- BBANDS float-coercion regression test --------------------------------
+
+
+def test_bbands_emits_nbdev_as_float():
+    """talib BBANDS rejects int nbdevup/nbdevdn — the compiler must coerce to float."""
+    doc = parse_string("""---
+name: bb-test
+version: 0.1.0
+market: {regime: [trending], timeframe: 5m, pair_universe: {quote: USDT, exchange: binance, filter: top50_volume}}
+signals:
+  entry_long: {conditions: ["close > bb_upper(20, 2)"]}
+  exit_long: {conditions: ["close < bb_lower(20, 2)"]}
+risk: {stoploss: -0.05, roi: {"0": 0.10}}
+sizing: {method: fixed_stake, max_open_trades: 3}
+---
+""")
+    code = compile_freqtrade(doc)
+    ast.parse(code)
+    # Must emit floats, not ints, otherwise talib raises TypeError at runtime.
+    assert "nbdevup=2.0" in code
+    assert "nbdevdn=2.0" in code
+    assert "nbdevup=2," not in code  # no bare int
+
+
 # ---- Custom stoploss / custom exit tests ----------------------------------
 
 

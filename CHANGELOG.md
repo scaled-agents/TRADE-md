@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-06-21
+
+### Added
+- **Short-side signal emission** in the freqtrade compiler. `entry_short` /
+  `exit_short` blocks now compile into `populate_entry_trend` /
+  `populate_exit_trend` alongside their long counterparts, and `can_short`
+  flips to `True` automatically when any short signal is present.
+- **`risk.custom_stoploss` block** with `type: atr_wick`. Auto-injects an ATR
+  computation into `populate_indicators` and emits a `custom_stoploss()`
+  method anchored at `entry_price ± (atr * multiplier)`. Sets
+  `use_custom_stoploss = True`. Honors `atr_period` (default 14) and
+  `atr_multiplier` (default 1.5).
+- **`risk.custom_exit` block** with `type: time_bailout`. Emits a
+  `custom_exit()` method that closes any open trade after `max_candles`
+  bars, with timeframe-aware threshold conversion (m/h/d).
+- Type-validated registries (`_CUSTOM_STOPLOSS_EMITTERS`,
+  `_CUSTOM_EXIT_EMITTERS`) so unknown `type:` values raise at compile time
+  rather than emitting broken code.
+- 7 new compiler tests (138 total, up from 131).
+
+### Fixed
+- Removed hardcoded `can_short = False` that silently dropped short signals
+  declared in TRADE.md.
+- Generalized empty-exit fallback comment from `"no exit_long conditions"`
+  to `"no exit conditions"` (covers both sides).
+
 ## [0.2.0] - 2026-04-22
 
 ### Added

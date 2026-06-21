@@ -5,8 +5,9 @@ Supports:
 - Builtin indicators mapped to `talib.abstract`
 - Custom indicators (v0.2) — imports from sibling package
 - Pandas rolling / shift / pct_change
-- Entry/exit long conditions (short support is stubbed)
+- Entry/exit long and short conditions
 - Risk config (stoploss, minimal_roi, trailing)
+- Custom stoploss (atr_wick) and custom exit (time_bailout) hooks
 - Protections (StoplossGuard, MaxDrawdown, ...)
 """
 from __future__ import annotations
@@ -239,6 +240,87 @@ def _version_matches_pin(version: str, pin: str) -> bool:
 # ---- Main entry point ----------------------------------------------------
 
 
+def _emit_custom_stoploss_atr_wick(cfg: dict[str, Any]) -> tuple[list[str], IndicatorUse]:
+    """Emit a custom_stoploss method that trails just outside the entry candle's
+    ATR-scaled wick. Returns the method body lines and the IndicatorUse for the
+    ATR column the method depends on (so populate_indicators emits it)."""
+    period = int(cfg.get("atr_period", 14))
+    mult = float(cfg.get("atr_multiplier", 1.5))
+    col = f"atr_{period}"
+    atr_use = IndicatorUse(
+        col=col, kind="builtin", name="atr", args=(period,), timeframe=None,
+    )
+    lines = [
+        "    def custom_stoploss(self, pair: str, trade, current_time,",
+        "                        current_rate: float, current_profit: float,",
+        "                        **kwargs) -> float | None:",
+        '        """ATR-wick stop: anchored at entry_price ± (atr * multiplier)."""',
+        "        df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)",
+        "        if df is None or len(df) < 1:",
+        "            return None",
+        f"        atr = df[{col!r}].iat[-1]",
+        "        if atr is None or atr == 0 or atr != atr:  # NaN check",
+        "            return None",
+        f"        offset = atr * {mult}",
+        "        if trade.is_short:",
+        "            sl_price = trade.open_rate + offset",
+        "            return (current_rate / sl_price) - 1",
+        "        sl_price = trade.open_rate - offset",
+        "        return (sl_price / current_rate) - 1",
+        "",
+    ]
+    return lines, atr_use
+
+
+def _emit_custom_exit_time_bailout(cfg: dict[str, Any], timeframe: str) -> list[str]:
+    """Emit a custom_exit method that exits the trade after max_candles bars,
+    regardless of P/L."""
+    max_candles = int(cfg.get("max_candles", 16))
+    tag = str(cfg.get("tag", "time_bailout"))
+    # Convert timeframe to minutes-per-candle.
+    minutes = _timeframe_to_minutes(timeframe)
+    threshold_seconds = max_candles * minutes * 60
+    lines = [
+        "    def custom_exit(self, pair: str, trade, current_time,",
+        "                    current_rate: float, current_profit: float,",
+        "                    **kwargs) -> str | None:",
+        f'        """Time bailout: exit after {max_candles} candles."""',
+        "        elapsed = (current_time - trade.open_date_utc).total_seconds()",
+        f"        if elapsed >= {threshold_seconds}:",
+        f"            return {tag!r}",
+        "        return None",
+        "",
+    ]
+    return lines
+
+
+def _timeframe_to_minutes(tf: str) -> int:
+    """Convert a freqtrade timeframe string (e.g. '15m', '1h', '4h', '1d') to minutes."""
+    if not tf:
+        raise ValueError("timeframe is required for time-based exits")
+    unit = tf[-1]
+    try:
+        n = int(tf[:-1])
+    except ValueError as e:
+        raise ValueError(f"Unparseable timeframe: {tf!r}") from e
+    if unit == "m":
+        return n
+    if unit == "h":
+        return n * 60
+    if unit == "d":
+        return n * 60 * 24
+    raise ValueError(f"Unsupported timeframe unit in {tf!r}")
+
+
+_CUSTOM_STOPLOSS_EMITTERS = {
+    "atr_wick": _emit_custom_stoploss_atr_wick,
+}
+
+_CUSTOM_EXIT_EMITTERS = {
+    "time_bailout": _emit_custom_exit_time_bailout,
+}
+
+
 def compile_freqtrade(doc: TradeDoc, allow_version_drift: bool = False) -> str | dict[str, str]:
     """Compile a TradeDoc into freqtrade IStrategy source.
 
@@ -258,28 +340,54 @@ def compile_freqtrade(doc: TradeDoc, allow_version_drift: bool = False) -> str |
 
     entry_long = signals.get("entry_long") or {}
     exit_long = signals.get("exit_long") or {}
+    entry_short = signals.get("entry_short") or {}
+    exit_short = signals.get("exit_short") or {}
 
-    entry_compiled = compile_conditions(
-        entry_long.get("conditions") or [],
-        indicators,
-        custom_indicators=custom_metas or None,
-    ) if entry_long.get("conditions") else None
-    exit_compiled = compile_conditions(
-        exit_long.get("conditions") or [],
-        indicators,
-        custom_indicators=custom_metas or None,
-    ) if exit_long.get("conditions") else None
+    def _compile_side(block: dict) -> Any:
+        conds = block.get("conditions") or []
+        if not conds:
+            return None
+        return compile_conditions(
+            conds, indicators, custom_indicators=custom_metas or None,
+        )
+
+    entry_compiled = _compile_side(entry_long)
+    exit_compiled = _compile_side(exit_long)
+    entry_short_compiled = _compile_side(entry_short)
+    exit_short_compiled = _compile_side(exit_short)
+
+    has_shorts = bool(entry_short_compiled or exit_short_compiled)
 
     # 2. Aggregate all uses
     all_uses: list[IndicatorUse] = []
     seen = set()
-    for c in (entry_compiled, exit_compiled):
+    for c in (entry_compiled, exit_compiled, entry_short_compiled, exit_short_compiled):
         if c is None:
             continue
         for u in c.uses:
             if u.col not in seen:
                 seen.add(u.col)
                 all_uses.append(u)
+
+    # 2b. Custom stoploss / custom exit blocks.
+    # These may inject extra indicator uses (e.g. ATR for atr_wick) and emit
+    # methods appended after populate_exit_trend.
+    custom_stoploss_cfg = doc.risk.get("custom_stoploss") or None
+    custom_exit_cfg = doc.risk.get("custom_exit") or None
+
+    custom_stoploss_lines: list[str] = []
+    if custom_stoploss_cfg:
+        cs_type = custom_stoploss_cfg.get("type")
+        emitter = _CUSTOM_STOPLOSS_EMITTERS.get(cs_type)
+        if not emitter:
+            raise ValueError(
+                f"Unsupported custom_stoploss.type: {cs_type!r}. "
+                f"Supported: {sorted(_CUSTOM_STOPLOSS_EMITTERS)}"
+            )
+        custom_stoploss_lines, extra_use = emitter(custom_stoploss_cfg)
+        if extra_use is not None and extra_use.col not in seen:
+            seen.add(extra_use.col)
+            all_uses.append(extra_use)
 
     # 3. Split uses by timeframe
     primary_uses = [u for u in all_uses if u.timeframe is None]
@@ -354,7 +462,9 @@ def compile_freqtrade(doc: TradeDoc, allow_version_drift: bool = False) -> str |
     lines.append(f"    startup_candle_count = {startup}")
     lines.append(f"    max_open_trades = {max_open_trades}")
     lines.append("    process_only_new_candles = True")
-    lines.append("    can_short = False")
+    lines.append(f"    can_short = {has_shorts}")
+    if custom_stoploss_cfg:
+        lines.append("    use_custom_stoploss = True")
     lines.append("")
 
     # protections
@@ -406,14 +516,23 @@ def compile_freqtrade(doc: TradeDoc, allow_version_drift: bool = False) -> str |
     # populate_entry_trend
     _pop_entry = "    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:"
     lines.append(_pop_entry)
+    emitted_entry = False
     if entry_compiled:
         tag = entry_long.get("tag", f"{doc.name}_entry")
         lines.append("        dataframe.loc[")
         lines.append(f"            ({entry_compiled.mask_expr}),")
         lines.append("            ['enter_long', 'enter_tag']")
         lines.append(f"        ] = (1, {tag!r})")
-    else:
-        lines.append("        # (no entry_long conditions)")
+        emitted_entry = True
+    if entry_short_compiled:
+        tag = entry_short.get("tag", f"{doc.name}_entry_short")
+        lines.append("        dataframe.loc[")
+        lines.append(f"            ({entry_short_compiled.mask_expr}),")
+        lines.append("            ['enter_short', 'enter_tag']")
+        lines.append(f"        ] = (1, {tag!r})")
+        emitted_entry = True
+    if not emitted_entry:
+        lines.append("        # (no entry conditions)")
         lines.append("        pass")
     lines.append("        return dataframe")
     lines.append("")
@@ -421,17 +540,41 @@ def compile_freqtrade(doc: TradeDoc, allow_version_drift: bool = False) -> str |
     # populate_exit_trend
     _pop_exit = "    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:"
     lines.append(_pop_exit)
+    emitted_exit = False
     if exit_compiled:
         tag = exit_long.get("tag", f"{doc.name}_exit")
         lines.append("        dataframe.loc[")
         lines.append(f"            ({exit_compiled.mask_expr}),")
         lines.append("            ['exit_long', 'exit_tag']")
         lines.append(f"        ] = (1, {tag!r})")
-    else:
-        lines.append("        # (no exit_long conditions)")
+        emitted_exit = True
+    if exit_short_compiled:
+        tag = exit_short.get("tag", f"{doc.name}_exit_short")
+        lines.append("        dataframe.loc[")
+        lines.append(f"            ({exit_short_compiled.mask_expr}),")
+        lines.append("            ['exit_short', 'exit_tag']")
+        lines.append(f"        ] = (1, {tag!r})")
+        emitted_exit = True
+    if not emitted_exit:
+        lines.append("        # (no exit conditions)")
         lines.append("        pass")
     lines.append("        return dataframe")
     lines.append("")
+
+    # custom_stoploss method (if configured)
+    if custom_stoploss_lines:
+        lines.extend(custom_stoploss_lines)
+
+    # custom_exit method (if configured)
+    if custom_exit_cfg:
+        ce_type = custom_exit_cfg.get("type")
+        emitter = _CUSTOM_EXIT_EMITTERS.get(ce_type)
+        if not emitter:
+            raise ValueError(
+                f"Unsupported custom_exit.type: {ce_type!r}. "
+                f"Supported: {sorted(_CUSTOM_EXIT_EMITTERS)}"
+            )
+        lines.extend(emitter(custom_exit_cfg, timeframe))
 
     strategy_src = "\n".join(lines)
 
